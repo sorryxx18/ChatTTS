@@ -1,3 +1,4 @@
+import re
 from .core import Chat
 import argparse
 import numpy as np

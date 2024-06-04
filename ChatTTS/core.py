@@ -1,11 +1,8 @@
 import os
 import sys
-import platform
+import re
 import logging
-from functools import partial
 from omegaconf import OmegaConf
-import random
-import numpy as np
 
 import torch
 from vocos import Vocos
@@ -19,6 +16,73 @@ from ChatTTS.utils.infer_utils import count_invalid_characters, detect_language
 from huggingface_hub import snapshot_download
 
 logging.basicConfig(level=logging.INFO)
+
+
+def number_to_chinese(num):
+    digits = "零一二三四五六七八九"
+    units = ["", "十", "百", "千", "万", "十", "百", "千", "亿", "十", "百", "千", "兆"]
+
+    if num == 0:
+        return "零"
+
+    integer_part, decimal_part = (
+        str(num).split(".") if "." in str(num) else (str(num), "")
+    )
+
+    def convert_integer_part(integer_str):
+        result = []
+        unit_position = 0
+        need_zero = False
+
+        for i, n in enumerate(reversed(integer_str)):
+            n = int(n)
+            if n != 0:
+                if need_zero:
+                    result.append(digits[0])
+                    need_zero = False
+                result.append(units[unit_position])
+                result.append(digits[n])
+            else:
+                if len(result) > 0 and result[-1] != digits[0]:
+                    need_zero = True
+            unit_position += 1
+
+        if result[-1] == "一" and result[-2] == "十":
+            result = result[:-1]
+
+        return "".join(result[::-1])
+
+    def convert_decimal_part(decimal_str):
+        result = []
+        for d in decimal_str:
+            result.append(digits[int(d)])
+        return "".join(result)
+
+    result = convert_integer_part(integer_part)
+    if decimal_part:
+        result += "点" + convert_decimal_part(decimal_part)
+
+    return result
+
+
+def process_num_text(text):
+    def replace_func(match):
+        return number_to_chinese(match.group(0))
+
+    return re.sub(r"\d+(\.\d+)?", replace_func, text)
+
+
+def process_text(text):
+    # process invaild number
+    punctuation_pattern = r"[^\w\s,，]"
+    replaced_text = re.sub(punctuation_pattern, ",", text)
+    replaced_text = re.sub(r"[._!;:]+", ",", replaced_text)
+    replaced_text = re.sub(r"\s+", " ", replaced_text)
+    replaced_text = re.sub(r",+", ",", replaced_text)
+    replaced_text = replaced_text.strip()
+    # process number to Chinese number
+    replaced_text = process_num_text(replaced_text)
+    return replaced_text
 
 
 class Chat:
@@ -169,6 +233,11 @@ class Chat:
 
         if not isinstance(text, list):
             text = [text]
+        try:
+            # try to process the text
+            text = [process_text(i) for i in text]
+        except:
+            pass
 
         if do_text_normalization:
             for i, t in enumerate(text):
